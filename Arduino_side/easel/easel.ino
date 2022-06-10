@@ -20,6 +20,7 @@
 #define SW_SCK             52 // Software Slave Clock (SCK)
 #define R_SENSE 0.11f // Match to your driver
 
+// States for motors
 #define UP                    1
 #define DOWN                  2
 #define RIGHT                 1
@@ -29,6 +30,7 @@
 #define DUTY_CYCLE            75.0f
 #define PERIOD_PWM            75    // decreasing period <--> decreasing rotation time
 
+// Command number
 #define LEFT_COMMAND          "0"
 #define RIGHT_COMMAND         "1"
 #define UP_COMMAND            "2"
@@ -39,13 +41,14 @@
 #define EXTREME_COMMAND       "7"
 #define STOP_COMMAND          "8"
 
-
+// For distance calculation
 #define LOOP_PER_TURN         13.0f
-#define DIST_PER_TURN         2.0f
-#define END_COURSE_DIST       5
-#define EXTREME_DIST          1000
-#define DIST_INCREMENT        50
+#define DIST_PER_TURN         2.0f    //mm
+#define END_COURSE_DIST       5       //mm
+#define EXTREME_DIST          1000    //mm  
+#define DIST_INCREMENT        50      //mm
 
+// Mode for end_course and extreme implementation
 #define NORMAL_MODE           0
 #define END_COURSE_MODE       1
 #define EXTREME_MODE          2
@@ -60,6 +63,11 @@ VL53L0X sensor_D;
 VL53L0X sensor_RTH;
 VL53L0X sensor_H;
 VL53L0X sensor_V;
+
+int dist_to_travel = 50;
+float dist_H = 0;
+float dist_V = 0;
+int mode = NORMAL_MODE;
 
 int state_V = 0; // 0 stop, 1 up, 2 down
 int state_H = 0;  // 0 stop, 1 right, 2 left
@@ -110,12 +118,7 @@ void setup()
   Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, PERIOD_PWM);
 }
 
-int prev_dist = 50;
-int dist_to_travel = 50;
-float dist_H = 0;
-float dist_V = 0;
-int mode = NORMAL_MODE;
-
+//loop
 void loop()
 {
   update_dist();
@@ -133,10 +136,9 @@ void loop()
   delay(10);
 }
 
-
+// Process command
 void command_process(){
-
-  if (msg.indexOf(END_COURSE_COMMAND) != -1){// fin de course
+  if (msg.indexOf(END_COURSE_COMMAND) != -1){
     end_of_course();
    }
 
@@ -178,6 +180,7 @@ void command_process(){
    }
 }
 
+// check for stop depending on the mode
 void check_for_stop(){
   switch(mode){
     case(NORMAL_MODE):
@@ -194,34 +197,35 @@ void check_for_stop(){
   }
 }
 
+// check limit distance and stop if needed
 void check_dist(int max_dist){
   if (dist_V > max_dist) {
       stop_move_V();
     }
-  
     if (dist_H > max_dist) {
       stop_move_H();
     }
 }
 
+//Stop vertical motor
 void stop_move_V(){
   state_V = STOP;
   dist_V = 0;
   digitalWrite(EN_PIN_V, HIGH);      // Disable driver in hardware
-
   if(state_H == STOP)
     mode = NORMAL_MODE;
 }
 
+//Stop horizontal motor
 void stop_move_H(){
   state_H = STOP;
   dist_H= 0;
   digitalWrite(EN_PIN_H, HIGH);      // Disable driver in hardware
-
   if(state_V == STOP)
     mode = NORMAL_MODE;
 }
 
+//update the distance travelled by the cart
 void update_dist(){
   if (state_V != STOP) {
     dist_V += DIST_PER_TURN/LOOP_PER_TURN;
@@ -232,6 +236,7 @@ void update_dist(){
   }
 }
 
+//end of course, reverse direction and switch mode
 void end_of_course(){
   if(state_V == DOWN){
     stop_move_V();
@@ -252,10 +257,10 @@ void end_of_course(){
     stop_move_H();
     state_H = RIGHT;
   }
-    
-  mode = END_COURSE_MODE; // distance retour fin de course
+  mode = END_COURSE_MODE;
 }
 
+//start vertical motor and set direction
 void set_motor_V()
 {
   if(state_V != STOP){
@@ -270,6 +275,7 @@ void set_motor_V()
   }
 }
 
+//start horizontal motor and set direction
 void set_motor_H()
 {    
    if(state_H != STOP) {
@@ -281,7 +287,6 @@ void set_motor_H()
    
     driver_H.shaft(shaft_H); // set the horizontal sens of rotation
     digitalWrite(EN_PIN_H, LOW);      // Enable driver in hardware
-
   }
 }
 

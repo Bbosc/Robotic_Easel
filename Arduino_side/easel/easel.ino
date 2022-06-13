@@ -1,5 +1,4 @@
-#include <Wire.h>
-#include <VL53L0X.h>
+
 #include <TimerThree.h>
 #include <TMCStepper.h>
 
@@ -27,8 +26,7 @@
 #define LEFT                  2
 #define STOP                  0
 
-#define DUTY_CYCLE            75.0f
-#define PERIOD_PWM            75    // decreasing period <--> decreasing rotation time
+#define DUTY_CYCLE            25.0f
 
 // Command number
 #define LEFT_COMMAND          "0"
@@ -41,11 +39,17 @@
 #define EXTREME_COMMAND       "7"
 #define STOP_COMMAND          "8"
 
+#define MAX_PERIOD_PWM        600
+#define MIN_PERIOD_PWM        150
+
 // For distance calculation
-#define LOOP_PER_TURN         13.0f
+#define MICROSTEPS            4
+#define STEP_PER_TURN         200.0f
+#define TIME_PER_LOOP         10       //ms
+
 #define DIST_PER_TURN         2.0f    //mm
 #define END_COURSE_DIST       5       //mm
-#define EXTREME_DIST          1000    //mm  
+#define EXTREME_DIST          1000    //mm
 #define DIST_INCREMENT        50      //mm
 
 // Mode for end_course and extreme implementation
@@ -56,14 +60,6 @@
 TMC2130Stepper driver_H(CS_PIN_H, R_SENSE, SW_MOSI, SW_MISO, SW_SCK); // Software SPI
 TMC2130Stepper driver_V(CS_PIN_V, R_SENSE, SW_MOSI, SW_MISO, SW_SCK); // Software SPI
 
-VL53L0X sensor_L;
-VL53L0X sensor_R;
-VL53L0X sensor_U;
-VL53L0X sensor_D;
-VL53L0X sensor_RTH;
-VL53L0X sensor_H;
-VL53L0X sensor_V;
-
 int dist_to_travel = 50;
 float dist_H = 0;
 float dist_V = 0;
@@ -71,6 +67,8 @@ int mode = NORMAL_MODE;
 
 int state_V = 0; // 0 stop, 1 up, 2 down
 int state_H = 0;  // 0 stop, 1 right, 2 left
+int period_pwm_H = MAX_PERIOD_PWM;
+int period_pwm_V = MAX_PERIOD_PWM;
 
 bool shaft_H = false;
 bool shaft_V = false;
@@ -80,9 +78,8 @@ String msg;
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(115200);
   delay(2000);
-  Wire.begin();
 
   //initialize TMC drivers
   pinMode(STEP_PIN_H, OUTPUT);
@@ -97,25 +94,25 @@ void setup()
   digitalWrite(EN_PIN_V, LOW);      // Enable driver in hardware
 
   driver_H.begin();                 // Init CS pins and SW SPI pins
-  driver_H.toff(5);                 // Enables driver in software
+  driver_H.toff(3);                 // Enables driver in software
   driver_H.rms_current(1200);        // Set motor RMS current
-  driver_H.microsteps(16);          // Set microsteps to 1/4th
-  driver_H.pwm_autoscale(true);     // Needed for stealthChop
-  driver_H.en_pwm_mode(true);       // enable stealthChop
+  driver_H.microsteps(MICROSTEPS);          // Set microsteps to 1/4th
+  //driver_H.pwm_autoscale(true);     // Needed for stealthChop
+  //driver_H.en_pwm_mode(true);       // enable stealthChop
 
   driver_V.begin();                 // Init CS pins and SW SPI pins
-  driver_V.toff(5);                 // Enables driver in software
+  driver_V.toff(3);                 // Enables driver in software
   driver_V.rms_current(1200);        // Set motor RMS current
-  driver_V.microsteps(16);          // Set microsteps to 1/4th
-  driver_V.pwm_autoscale(true);     // Needed for stealthChop
-  driver_V.en_pwm_mode(true);         // enable stealthChop
+  driver_V.microsteps(MICROSTEPS);          // Set microsteps to 1/4th
+  //driver_V.pwm_autoscale(true);     // Needed for stealthChop
+  //driver_V.en_pwm_mode(true);         // enable stealthChop
 
   digitalWrite(EN_PIN_H, HIGH);      // De-enable driver in hardware
   digitalWrite(EN_PIN_V, HIGH);      // De-enable driver in hardware
 
-  Timer3.initialize(40);
-  Timer3.pwm(STEP_PIN_V, (DUTY_CYCLE / 100.0) * 1023.0, PERIOD_PWM);
-  Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, PERIOD_PWM);
+  Timer3.initialize(MAX_PERIOD_PWM);
+  Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, MAX_PERIOD_PWM);
+  Timer3.pwm(STEP_PIN_V, (DUTY_CYCLE/ 100.0) * 1023.0, MAX_PERIOD_PWM);
 }
 
 //loop
@@ -125,7 +122,6 @@ void loop()
   check_for_stop();
   
   readSerialPort();
-  //sendData();
   
   if (msg != "") {
      sendData();
@@ -133,7 +129,35 @@ void loop()
      set_motor_V();
      set_motor_H();
   }
-  delay(10);
+  set_pwm();
+  delay(TIME_PER_LOOP);
+}
+
+void set_pwm(){
+  if(state_H != STOP){
+    if(period_pwm_H > MIN_PERIOD_PWM) period_pwm_H--;
+   Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_H);
+  }
+  if(state_V != STOP){
+    if(period_pwm_V > MIN_PERIOD_PWM) period_pwm_V--; 
+    Timer3.pwm(STEP_PIN_V, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_V);
+  }
+}
+// decell V
+void decceleration_V(){
+  while(period_pwm_V < MAX_PERIOD_PWM){
+    period_pwm_V +=3;
+    Timer3.pwm(STEP_PIN_V, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_V);
+    delay(TIME_PER_LOOP);
+  }
+}
+//decell H
+void decceleration_H(){
+  while(period_pwm_H < MAX_PERIOD_PWM){
+    period_pwm_H +=3;  
+    Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_H);
+    delay(TIME_PER_LOOP);
+  }
 }
 
 // Process command
@@ -209,30 +233,38 @@ void check_dist(int max_dist){
 
 //Stop vertical motor
 void stop_move_V(){
+  decceleration_V();
   state_V = STOP;
   dist_V = 0;
-  digitalWrite(EN_PIN_V, HIGH);      // Disable driver in hardware
+  digitalWrite(EN_PIN_V, HIGH);
   if(state_H == STOP)
     mode = NORMAL_MODE;
+
+  period_pwm_V = MAX_PERIOD_PWM;
 }
 
 //Stop horizontal motor
 void stop_move_H(){
+  decceleration_H();
   state_H = STOP;
   dist_H= 0;
-  digitalWrite(EN_PIN_H, HIGH);      // Disable driver in hardware
+  digitalWrite(EN_PIN_H, HIGH);
   if(state_V == STOP)
     mode = NORMAL_MODE;
+    
+  period_pwm_H = MAX_PERIOD_PWM;
 }
 
 //update the distance travelled by the cart
 void update_dist(){
   if (state_V != STOP) {
-    dist_V += DIST_PER_TURN/LOOP_PER_TURN;
+    float time_per_turn = MICROSTEPS*STEP_PER_TURN*period_pwm_V/1000;
+    dist_V += DIST_PER_TURN*TIME_PER_LOOP/time_per_turn;
   }
 
   if (state_H != STOP) {
-    dist_H += DIST_PER_TURN/LOOP_PER_TURN;
+    float time_per_turn = MICROSTEPS*STEP_PER_TURN*period_pwm_H/1000;
+    dist_H += DIST_PER_TURN*TIME_PER_LOOP/time_per_turn;
   }
 }
 
@@ -265,12 +297,10 @@ void set_motor_V()
 {
   if(state_V != STOP){
     if (state_V == UP)
-      shaft_V = true;
+      driver_V.shaft(true);
       
     else if (state_V == DOWN)
-      shaft_V = false;
-      
-    driver_V.shaft(shaft_V);
+      driver_V.shaft(false);
     digitalWrite(EN_PIN_V, LOW);      // Enable driver in hardware
   }
 }
@@ -280,13 +310,12 @@ void set_motor_H()
 {    
    if(state_H != STOP) {
     if (state_H == RIGHT)
-      shaft_H = true;
+      driver_H.shaft(true); 
 
     else if (state_H == LEFT)
-      shaft_H = false;
-   
-    driver_H.shaft(shaft_H); // set the horizontal sens of rotation
-    digitalWrite(EN_PIN_H, LOW);      // Enable driver in hardware
+      driver_H.shaft(false); 
+      
+      digitalWrite(EN_PIN_H, LOW);      // Enable driver in hardware
   }
 }
 

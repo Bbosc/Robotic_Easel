@@ -26,7 +26,7 @@
 #define LEFT                  2
 #define STOP                  0
 
-#define DUTY_CYCLE            25.0f
+#define DUTY_CYCLE            75.0f
 
 // Command number
 #define LEFT_COMMAND          "0"
@@ -39,16 +39,16 @@
 #define EXTREME_COMMAND       "7"
 #define STOP_COMMAND          "8"
 
-#define MAX_PERIOD_PWM        600
-#define MIN_PERIOD_PWM        150
+#define MAX_PERIOD_PWM        500
+#define MIN_PERIOD_PWM        300
 
 // For distance calculation
 #define MICROSTEPS            4
 #define STEP_PER_TURN         200.0f
-#define TIME_PER_LOOP         10       //ms
+#define TIME_PER_LOOP         2       //ms
 
 #define DIST_PER_TURN         2.0f    //mm
-#define END_COURSE_DIST       5       //mm
+#define END_COURSE_DIST       10       //mm
 #define EXTREME_DIST          1000    //mm
 #define DIST_INCREMENT        50      //mm
 
@@ -92,6 +92,8 @@ void setup()
 
   digitalWrite(EN_PIN_H, LOW);      // Enable driver in hardware
   digitalWrite(EN_PIN_V, LOW);      // Enable driver in hardware
+  digitalWrite(STEP_PIN_H, LOW);
+  digitalWrite(STEP_PIN_V, LOW);
 
   driver_H.begin();                 // Init CS pins and SW SPI pins
   driver_H.toff(3);                 // Enables driver in software
@@ -111,8 +113,6 @@ void setup()
   digitalWrite(EN_PIN_V, HIGH);      // De-enable driver in hardware
 
   Timer3.initialize(MAX_PERIOD_PWM);
-  Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, MAX_PERIOD_PWM);
-  Timer3.pwm(STEP_PIN_V, (DUTY_CYCLE/ 100.0) * 1023.0, MAX_PERIOD_PWM);
 }
 
 //loop
@@ -120,7 +120,6 @@ void loop()
 {
   update_dist();
   check_for_stop();
-  
   readSerialPort();
   
   if (msg != "") {
@@ -129,33 +128,39 @@ void loop()
      set_motor_V();
      set_motor_H();
   }
-  set_pwm();
   delay(TIME_PER_LOOP);
 }
 
-void set_pwm(){
-  if(state_H != STOP){
-    if(period_pwm_H > MIN_PERIOD_PWM) period_pwm_H--;
-   Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_H);
-  }
-  if(state_V != STOP){
-    if(period_pwm_V > MIN_PERIOD_PWM) period_pwm_V--; 
-    Timer3.pwm(STEP_PIN_V, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_V);
-  }
-}
 // decell V
 void decceleration_V(){
   while(period_pwm_V < MAX_PERIOD_PWM){
-    period_pwm_V +=3;
+    period_pwm_V +=4;
     Timer3.pwm(STEP_PIN_V, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_V);
     delay(TIME_PER_LOOP);
   }
 }
+
 //decell H
 void decceleration_H(){
   while(period_pwm_H < MAX_PERIOD_PWM){
     period_pwm_H +=3;  
     Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_H);
+    delay(TIME_PER_LOOP);
+  }
+}
+
+void acceleration_H(){
+  while(period_pwm_H > MIN_PERIOD_PWM){
+    period_pwm_H --;
+    Timer3.pwm(STEP_PIN_H, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_H);
+    delay(TIME_PER_LOOP);
+  }
+}
+
+void acceleration_V(){
+  while(period_pwm_V > MIN_PERIOD_PWM){
+    period_pwm_V --;
+    Timer3.pwm(STEP_PIN_V, (DUTY_CYCLE/ 100.0) * 1023.0, period_pwm_V);
     delay(TIME_PER_LOOP);
   }
 }
@@ -296,26 +301,30 @@ void end_of_course(){
 void set_motor_V()
 {
   if(state_V != STOP){
+    digitalWrite(EN_PIN_V, LOW);      // Enable driver in hardware
     if (state_V == UP)
       driver_V.shaft(true);
       
     else if (state_V == DOWN)
       driver_V.shaft(false);
-    digitalWrite(EN_PIN_V, LOW);      // Enable driver in hardware
+    
+    acceleration_V();
   }
 }
 
 //start horizontal motor and set direction
 void set_motor_H()
-{    
+{   
    if(state_H != STOP) {
+    digitalWrite(EN_PIN_H, LOW);      // Enable driver in hardware
     if (state_H == RIGHT)
       driver_H.shaft(true); 
-
+   
     else if (state_H == LEFT)
       driver_H.shaft(false); 
       
-      digitalWrite(EN_PIN_H, LOW);      // Enable driver in hardware
+      
+      acceleration_H();
   }
 }
 
